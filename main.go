@@ -23,9 +23,10 @@ import (
 	"runtime"
 
 	"github.com/gorilla/websocket"
-	"github.com/krombel/matrix-websockets-proxy/proxy"
+	"./proxy"
 )
 
+var compress = flag.Bool("compress", false, "Enable compression of the WebSocket-Connection with per-message-deflate")
 var port = flag.Int("port", 8009, "TCP port to listen on")
 var upstreamURL = flag.String("upstream", "http://localhost:8008/", "URL of upstream server")
 var testHTML *string
@@ -57,7 +58,17 @@ func serveStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := proxy.NewClient(*upstreamURL, r.URL.Query().Get("access_token"))
+	accessToken := r.Header.Get("Authorization")
+	if accessToken != "" {
+		if accessToken[0:6] == "Bearer " {
+			accessToken = accessToken[7:len(accessToken)]
+		}
+	} else {
+		accessToken = r.URL.Query().Get("access_token")
+	}
+	log.Println("Recognized AccessToken: " + accessToken)
+
+	client := proxy.NewClient(*upstreamURL, accessToken)
 	client.NextSyncBatch = r.URL.Query().Get("since")
 	client.Filter = r.URL.Query().Get("filter")
 
@@ -76,6 +87,7 @@ func serveStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	upgrader := websocket.Upgrader{
+		EnableCompression: *compress,
 		Subprotocols: []string{"m.json"},
 	}
 	ws, err := upgrader.Upgrade(w, r, nil)
@@ -83,6 +95,7 @@ func serveStream(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
+	ws.EnableWriteCompression(*compress)
 
 	c := proxy.New(client, ws)
 	c.SendMessage(msg)
